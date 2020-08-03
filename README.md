@@ -7,6 +7,6 @@
 ## OUTPUT
 
 |CVAE|labeled CVAE|GAN|
-|:---:|:---:|:---:|:---:|
+|:---:|:---:|:---:|
 |![](./imgs/minst_cvae.gif)|![](./imgs/minst_cvae_label.gif)|![](./imgs/minst_gan.gif)|
 |||
