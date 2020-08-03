@@ -1,0 +1,6 @@
+data/
+imgs/*/*.png
+source/__*
+logs/
+ckpt/
+model/
