@@ -4,24 +4,20 @@
 
 采用的数据集为`MINST`和`CelebA`
 
-## OUTPUT
+## MINST
 
-|CVAE|labeled CVAE|GAN|
-|:---:|:---:|:---:|
-|![](./imgs/minst_cvae.gif)|![](./imgs/minst_cvae_label.gif)|![](./imgs/minst_gan.gif)|
-|||
 
+|CVAE|labeled CVAE|GAN|WGAN-GP|
+|:---:|:---:|:---:|:---:|
+|![](./imgs/minst_cvae.gif)|![](./imgs/minst_cvae_label.gif)|![](./imgs/minst_gan.gif)|![](./imgs/minst_wgan-gp.gif)
+
+
+|WGAN-GP|WGAN-GP_Inception|SAGAN||
+|:---:|:---:|:---:|:---:|
+|![](./imgs/WGAN_GP_0090.png)|![](./imgs/WGAN_GP_inception_0064.png)|
+
+- 都不是很清晰，可能原因是参数太少了，刚百万，训练的轮次比较少
 
 ## 训练GAN的一些trick
 
 参考: [训练GANs一年我学到的10个教训](https://zhuanlan.zhihu.com/p/79959150)
-
-### 标签平滑
-
-### 多尺度梯度
-
-### Two Time-Scale Update Rule
-
-### 谱归一化
-
-### critical loss
