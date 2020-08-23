@@ -4,5 +4,5 @@ source/__*
 logs/
 ckpt/
 model/
-source/CSE65*
-source/SAGAN-*
+source/CSE65*/
+source/SAGAN-*/
