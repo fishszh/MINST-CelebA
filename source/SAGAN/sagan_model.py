@@ -1,8 +1,9 @@
 import matplotlib.pyplot as plt
 import tensorflow as tf
+from tensorflow.keras import layers
 import time
-from .spectral import SpectralConv2D, SpectralConv2DTranspose
-from .attention import SelfAttentionModel
+from .spectral import SpectralNormalization
+from .attention import Attention
 from .config import Config
 
 class SAGAN:
@@ -19,7 +20,7 @@ class SAGAN:
         self.lr_fn_d = tf.keras.optimizers.schedules.PolynomialDecay(
                             self.cfg.initial_learning_rate*4, 
                             self.cfg.decay_steps, 
-                            self.cfg.end_learning_rate, 
+                            self.cfg.end_learning_rate*4, 
                             self.cfg.power, cycle=True)
         self.optimizer_g = tf.keras.optimizers.Adam(self.lr_fn_g)
         self.optimizer_d = tf.keras.optimizers.Adam(self.lr_fn_g)
@@ -33,71 +34,70 @@ class SAGAN:
         self.ckpt_manager = tf.train.CheckpointManager(self.ckpt, self.cfg.ckpt_path, max_to_keep=3, checkpoint_name=self.cfg.model_name)
         if self.ckpt_manager.latest_checkpoint:
             self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
+            pass
 
     def create_generator(self):
-        inputs = tf.keras.layers.Input([self.cfg.z_dim,])
-        shape = [self.cfg.img_w//64,self.cfg.img_h//64,self.cfg.z_dim]
-        # x = tf.keras.layers.Dense(tf.reduce_prod(shape))(inputs)
-        x = tf.keras.layers.Reshape(shape)(inputs)
-
         filters = self.cfg.filters_gen
+        shape = [self.cfg.img_w//2**4, self.cfg.img_h//2**4, filters]
+        model = tf.keras.Sequential()
+        model.add(layers.InputLayer(input_shape=(self.cfg.z_dim,)))
+        model.add(layers.Dense(tf.reduce_prod(shape)))
+        model.add(layers.Reshape(shape))
+        model.add(layers.ReLU())
+        # [b, 4, 4, filters] -> [b, 32, 32, filters//2**3]
         for i in range(3):
             filters //= 2
-            strides = 2 if i == 0 else 2
-            x = SpectralConv2DTranspose(filters=filters, kernel_size=4, strides=strides, padding='same')(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.ReLU()(x)
+            model.add(SpectralNormalization(layers.Conv2DTranspose(filters, 4, 2, 'same', use_bias=False)))
+            model.add(layers.BatchNormalization())
+            model.add(layers.LeakyReLU(self.cfg.leakrelu_alpha))
         
-        x, attn1 = SelfAttentionModel(filters)(x)
-
-        for i in range(2):
-            filters //= 2
-            x = SpectralConv2DTranspose(filters=filters, kernel_size=4, strides=2, padding='same')(x)
-            x = tf.keras.layers.BatchNormalization()(x)
-            x = tf.keras.layers.ReLU()(x)
-
-        x, attn2 = SelfAttentionModel(filters)(x)
-
-        x = SpectralConv2DTranspose(filters=self.cfg.img_c, kernel_size=4, strides=1, padding='same')(x)
-        x = tf.keras.layers.Activation('tanh')(x)
-        return tf.keras.models.Model(inputs, x)
+        model.add(Attention(channels=filters))
+        # [b, 32, 32, filter//2**3] -> [b, 64, 64, filter//2**4]
+        model.add(SpectralNormalization(layers.Conv2DTranspose(filters//2, 4, 2, 'same', use_bias=False)))
+        model.add(layers.BatchNormalization())
+        model.add(layers.LeakyReLU(self.cfg.leakrelu_alpha))
+        model.add(Attention(channels=filters//2))
+        # [b, w, h, filters//2**4] -> [b, w, h, 3]
+        model.add(layers.Conv2DTranspose(3, 3, 1, 'same', activation='tanh'))
+        
+        return model
 
     def create_discriminator(self):
-        inputs = tf.keras.layers.Input([self.cfg.img_w, self.cfg.img_h, 3])
-
-        x = inputs
         filters = self.cfg.filters_dis
+        shape = [self.cfg.img_w, self.cfg.img_h, 3]
+        model = tf.keras.Sequential()
+        model.add(layers.InputLayer(shape))
+        # [b, 64, 64, 3] -> [b, 8, 8, filters*8]
         for i in range(3):
             filters *= 2
-            x = SpectralConv2D(filters=filters, kernel_size=4, strides=2, padding='same')(x)
-            x = tf.keras.layers.LeakyReLU(self.cfg.leakrelu_alpha)(x)
+            model.add(SpectralNormalization(layers.Conv2D(filters, 4, 2, 'same')))
+            model.add(layers.LeakyReLU(self.cfg.leakrelu_alpha))
+        model.add(Attention(channels=filters))
+        # [b, 8, 8, filters*8] -> [b, 1, 1, filters*32]
+        model.add(SpectralNormalization(layers.Conv2D(filters*4, 4, 2, 'valid')))
+        model.add(layers.LeakyReLU(self.cfg.leakrelu_alpha))
+        # [b, 1, 1, filter*32] -> [b, 1]
+        model.add(layers.Flatten())
+        model.add(layers.Dense(1))
 
-        x, attn1 = SelfAttentionModel(filters)(x)
-        filters = self.cfg.filters_dis
-        for i in range(1):
-            filters *= 2
-            x = SpectralConv2D(filters=filters, kernel_size=4, strides=2, padding='same')(x)
-            x = tf.keras.layers.LeakyReLU(self.cfg.leakrelu_alpha)(x)
-
-        x, attn2 = SelfAttentionModel(filters)(x)
-
-        x = SpectralConv2D(filters=1, kernel_size=4, strides=2, padding='valid')(x)
-        x = tf.keras.layers.Flatten()(x)
-
-        return tf.keras.Model(inputs, x)
-
+        return model
+    @tf.function
     def gradient_penalty(self, x_real, x_fake):
-        alpha = tf.random.normal(shape=[x_real.shape[0], 1, 1, 1])
+        alpha = tf.random.uniform(shape=[x_real.shape[0], 1, 1, 1], minval=0., maxval=1.0)
+        # alpha = tf.broadcast_to(alpha, x_real.shape)
         interplated = alpha * x_real + (1 - alpha) * x_fake
 
         with tf.GradientTape() as tape:
             tape.watch(interplated)
-            logits = self.discriminator(interplated)
+            logits = self.discriminator(interplated, training=True)
 
         grads = tape.gradient(logits, interplated)
-        grads = tf.norm(tf.reshape(grads, [x_real.shape[0], -1]), axis=1)
+        grads = tf.reshape(grads, [grads.shape[0], -1])
 
-        return self.cfg.gradient_penalty_weight * tf.reduce_mean(tf.square(grads-1))
+        gp = tf.norm(grads, axis=1)
+        gp = tf.reduce_mean(tf.square(gp-1))
+
+        return self.cfg.gradient_penalty_weight * gp
     
     def train(self, x_train):
         test_z = tf.random.normal([25, self.cfg.z_dim])
@@ -108,10 +108,11 @@ class SAGAN:
                     self.train_discriminator(x_real)
 
                 self.train_generator()
-                if i % 500 == 0:
+                if i % (5000//self.cfg.batch_size) == 0:
                     with self.summary_writer.as_default():
                         tf.summary.scalar('loss_g', self.loss_g.result(), step=i)
                         tf.summary.scalar('loss_d', self.loss_d.result(), step=i)
+                if i % (20000//self.cfg.batch_size) == 0:
                     self.gen_plot(epoch, test_z)
 
             if epoch % 1 == 0:
@@ -131,8 +132,8 @@ class SAGAN:
 
         with tf.GradientTape() as tape:
             x_fake = self.generator(z, training=False)
-            logits_fake = self.discriminator(x_fake, training=True)
             logits_real = self.discriminator(x_real, training=True)
+            logits_fake = self.discriminator(x_fake, training=True)
             loss = self.loss_func_d(logits_fake, logits_real)
             gp = self.gradient_penalty(x_real, x_fake)
             loss += gp
@@ -157,9 +158,12 @@ class SAGAN:
 
         self.loss_g.update_state(loss)
     
+    @tf.function
     def loss_func_d(self, logistic_fake, logistic_real):
+        # loss_f = tf.nn.relu(1+logistic_fake)
+        # loss_r = tf.nn.relu(1-logistic_real)
         return tf.reduce_mean(logistic_fake) - tf.reduce_mean(logistic_real)
-
+    @tf.function
     def loss_func_g(self, logistic_fake):
         return - tf.reduce_mean(logistic_fake)
 

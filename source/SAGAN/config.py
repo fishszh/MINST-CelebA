@@ -9,7 +9,7 @@ class Config:
         self.img_shape = [self.img_w, self.img_h, self.img_c]
         
         self.batch_size = 50
-        self.buffer_size = self.batch_size * 2
+        self.buffer_size = self.batch_size * 3
         self.start_epoch = 1
         self.end_epoch = 101
 
@@ -21,7 +21,7 @@ class Config:
         self.bn_momentum = 0.9
         self.bn_epsilon = 1e-5
 
-        self.leakrelu_alpha = 0.2
+        self.leakrelu_alpha = 0.1
         
         # model parameters
         self.z_dim = 100
@@ -49,4 +49,7 @@ class Config:
         if gpus:
             tf.config.set_visible_devices(devices=gpus[0], device_type='GPU')
             os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-            tf.config.experimental.set_memory_growth(device=gpus[0], enable=True)
+            tf.config.set_logical_device_configuration(
+                        gpus[0],
+                        [tf.config.LogicalDeviceConfiguration(memory_limit=14500)])
+            # tf.config.experimental.set_memory_growth(device=gpus[0], enable=True)

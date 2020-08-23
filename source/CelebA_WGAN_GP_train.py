@@ -83,8 +83,8 @@ class SubWGAN_GP(WGAN_GP):
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    dataloader = CelebALoader(SubConfig())
-    train_data = dataloader.dataset
+    # dataloader = CelebALoader(SubConfig())
+    # train_data = dataloader.dataset
     model =  SubWGAN_GP(config=SubConfig())
     model.generator.summary()
     model.discriminator.summary()
